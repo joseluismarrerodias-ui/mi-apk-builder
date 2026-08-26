@@ -1,0 +1,77 @@
+name: Compilar APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Buscar y descomprimir proyecto
+        run: |
+          mkdir -p project
+          find . -maxdepth 1 -type f -name "*.zip" -print -quit | while read ZIP; do
+            echo "Descomprimiendo: $ZIP"
+            unzip -q "$ZIP" -d project
+          done
+
+          PROJECT_DIR=$(find project -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: No se encontró un proyecto Android Gradle"
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "Proyecto encontrado en: $PROJECT_DIR"
+
+      - name: Preparar Gradle
+        run: |
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          else
+            echo "ERROR: El proyecto no contiene gradlew"
+            exit 1
+          fi
+
+      - name: Compilar APK
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Buscar APK generado
+        run: |
+          APK=$(find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/*/*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: Gradle terminó pero no se encontró ningún APK"
+            exit 1
+          fi
+
+          mkdir -p output
+          cp "$APK" output/app.apk
+
+          echo "APK encontrado:"
+          ls -lh output/app.apk
+
+      - name: Subir APK terminado
+        uses: actions/upload-artifact@v4
+        with:
+          name: APK-terminado
+          path: output/app.apk
+          if-no-files-found: error
