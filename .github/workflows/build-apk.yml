@@ -54,20 +54,37 @@ jobs:
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
           if [ ! -f "./gradlew" ]; then
-            echo "ERROR: gradlew was not found."
-            echo "This Android project needs the Gradle wrapper."
-            exit 1
+            echo "gradlew not found. Generating Gradle wrapper..."
+
+            GRADLE_VERSION="9.3.1"
+            GRADLE_ZIP="$RUNNER_TEMP/gradle-$GRADLE_VERSION-bin.zip"
+
+            curl -fsSL \
+              "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" \
+              -o "$GRADLE_ZIP"
+
+            unzip -q "$GRADLE_ZIP" -d "$RUNNER_TEMP"
+
+            "$RUNNER_TEMP/gradle-$GRADLE_VERSION/bin/gradle" wrapper \
+              --gradle-version "$GRADLE_VERSION"
+
+          else
+            echo "Gradle wrapper already exists."
           fi
 
           chmod +x ./gradlew
+
+          echo "Gradle wrapper is ready."
 
       - name: Build APK
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
 
           ./gradlew assembleDebug --stacktrace
@@ -85,11 +102,12 @@ jobs:
           fi
 
           mkdir -p apk-output
+
           cp "$APK_FILE" apk-output/app.apk
 
           echo "APK_FILE=apk-output/app.apk" >> "$GITHUB_ENV"
 
-          echo "APK successfully created."
+          echo "APK successfully created: $APK_FILE"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
