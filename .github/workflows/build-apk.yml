@@ -14,59 +14,114 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Instalar Java
+      - name: Instalar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Buscar y descomprimir proyecto
+        shell: bash
         run: |
+          set -e
+
           mkdir -p project
-          find . -maxdepth 1 -type f -name "*.zip" -print -quit | while read ZIP; do
-            echo "Descomprimiendo: $ZIP"
-            unzip -q "$ZIP" -d project
-          done
 
-          PROJECT_DIR=$(find project -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -printf '%h\n' | head -n 1)
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: No se encontró un proyecto Android Gradle"
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No se encontró ningún archivo ZIP en el repositorio."
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "Descomprimiendo: $ZIP"
+          unzip -q "$ZIP" -d project
+
+          PROJECT_DIR=$(find project -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: No se encontró settings.gradle ni settings.gradle.kts."
+            echo "El ZIP no parece contener un proyecto Android Gradle válido."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Proyecto encontrado en: $PROJECT_DIR"
 
       - name: Preparar Gradle
+        shell: bash
         run: |
+          set -e
+
           cd "$PROJECT_DIR"
 
           if [ -f "./gradlew" ]; then
+            echo "Se encontró Gradle Wrapper."
             chmod +x ./gradlew
+            echo "GRADLE_CMD=./gradlew" >> "$GITHUB_ENV"
           else
-            echo "ERROR: El proyecto no contiene gradlew"
-            exit 1
+            echo "No se encontró gradlew. Se descargará Gradle 8.7."
+
+            cd /tmp
+
+            wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+            unzip -q gradle-8.7-bin.zip
+
+            echo "/tmp/gradle-8.7/bin" >> "$GITHUB_PATH"
+            echo "GRADLE_CMD=gradle" >> "$GITHUB_ENV"
+          fi
+
+      - name: Mostrar información del proyecto
+        shell: bash
+        run: |
+          echo "Proyecto: $PROJECT_DIR"
+          echo "Contenido principal:"
+          ls -la "$PROJECT_DIR"
+
+          if [ -d "$PROJECT_DIR/app" ]; then
+            echo "Se encontró el módulo app."
+          else
+            echo "ADVERTENCIA: No se encontró una carpeta app."
           fi
 
       - name: Compilar APK
+        shell: bash
         run: |
+          set -e
+
           cd "$PROJECT_DIR"
-          ./gradlew assembleDebug --stacktrace
+
+          echo "Usando: $GRADLE_CMD"
+          $GRADLE_CMD --version
+
+          $GRADLE_CMD assembleDebug \
+            --stacktrace \
+            --no-daemon
 
       - name: Buscar APK generado
+        shell: bash
         run: |
-          APK=$(find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/*/*.apk" | head -n 1)
+          set -e
+
+          mkdir -p output
+
+          APK=$(find "$PROJECT_DIR" -type f -name "*.apk" \
+            -path "*/build/outputs/apk/*" | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: Gradle terminó pero no se encontró ningún APK"
+            echo "ERROR: La compilación terminó pero no se encontró ningún APK."
+            echo "Archivos encontrados en outputs:"
+            find "$PROJECT_DIR" -type f | grep "build/outputs" || true
             exit 1
           fi
 
-          mkdir -p output
+          echo "APK encontrado: $APK"
+
           cp "$APK" output/app.apk
 
-          echo "APK encontrado:"
+          echo "Archivo final:"
           ls -lh output/app.apk
 
       - name: Subir APK terminado
@@ -75,3 +130,4 @@ jobs:
           name: APK-terminado
           path: output/app.apk
           if-no-files-found: error
+          retention-days: 7
